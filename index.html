@@ -1,0 +1,1476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>船舶能耗计算器</title>
+<script>
+/* 首屏前确定主题，避免深色模式闪白：用户手动选择优先，否则跟随系统 */
+(function () {
+  try {
+    var saved = localStorage.getItem("ship-energy-theme-v1");
+    var theme = saved === "dark" || saved === "light"
+      ? saved
+      : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.dataset.theme = theme;
+  } catch (e) {
+    document.documentElement.dataset.theme = "light";
+  }
+})();
+</script>
+<style>
+  :root {
+    --navy: #0b2545;
+    --navy-2: #13315c;
+    --sea: #1d4e89;
+    --bg: #eef2f7;
+    --card: #ffffff;
+    --line: #dbe3ee;
+    --text: #1d2939;
+    --muted: #667085;
+    --sailing: #2563eb;
+    --anchorage: #d97706;
+    --drifting: #0891b2;
+    --berthing: #16a34a;
+    --danger: #dc2626;
+
+    /* 主题语义 token（浅色缺省值，由 [data-theme="dark"] 覆盖） */
+    color-scheme: light;
+    --heading: var(--navy);
+    --accent: var(--sea);
+    --input-bg: #ffffff;
+    --subtle-bg: #f6f8fb;
+    --hover-bg: #fafcff;
+    --chip-bg: #f8fafc;
+    --fuel-bg: #fffbeb;
+    --fuel-border: #fde68a;
+    --fuel-text: #92400e;
+    --fuel-sub: #a16207;
+    --ok: #15803d;
+    --danger-text: #dc2626;
+    --danger-border: #f3c2c2;
+    --danger-hover: #fef2f2;
+    --outline-border: #b9cbe0;
+    --outline-hover: #f1f6fc;
+    --focus-ring: var(--focus-ring);
+    --card-shadow: 0 1px 3px rgba(16,24,40,.06);
+    --toast-bg: var(--navy);
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0a1120;
+    --card: #131d30;
+    --line: #2a3850;
+    --text: #e2e8f2;
+    --muted: #94a3b8;
+    --heading: #f1f5fb;
+    --accent: #8ab8ff;
+    --input-bg: #0e1728;
+    --subtle-bg: #182338;
+    --hover-bg: #1d2942;
+    --chip-bg: #172236;
+    --fuel-bg: #261f10;
+    --fuel-border: #5f4d1c;
+    --fuel-text: #fbbf24;
+    --fuel-sub: #d0ab66;
+    --ok: #4ade80;
+    --danger-text: #f87171;
+    --danger-border: #6b2f2f;
+    --danger-hover: #2e181b;
+    --outline-border: #3b4b66;
+    --outline-hover: #1e2a42;
+    --focus-ring: rgba(96,165,250,.25);
+    --card-shadow: 0 1px 3px rgba(0,0,0,.45);
+    --toast-bg: #1e2a3f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    transition: background-color .2s, color .2s;
+  }
+  header {
+    background: linear-gradient(135deg, var(--navy) 0%, var(--sea) 100%);
+    color: #fff;
+    padding: 22px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 2px 10px rgba(11,37,69,.25);
+  }
+  header .logo { font-size: 34px; line-height: 1; }
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: 1px; }
+  header p { font-size: 13px; opacity: .8; margin-top: 3px; }
+  .theme-toggle {
+    margin-left: auto;
+    flex: none;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.28);
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background-color .2s, transform .1s;
+  }
+  .theme-toggle:hover { background: rgba(255,255,255,.22); }
+  .theme-toggle:active { transform: scale(.94); }
+  .theme-toggle svg { width: 19px; height: 19px; display: block; }
+  .theme-toggle .icon-sun { display: none; }
+  html[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+  html[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+  @media (max-width: 600px) {
+    header { padding: 18px 20px; }
+  }
+  .container { max-width: 1180px; margin: 24px auto; padding: 0 20px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+    box-shadow: var(--card-shadow);
+    transition: background-color .2s, border-color .2s, box-shadow .2s;
+  }
+  .card h2 {
+    font-size: 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--heading);
+  }
+  .card h2::before {
+    content: "";
+    width: 4px; height: 16px;
+    background: var(--sea);
+    border-radius: 2px;
+  }
+
+  /* 录入表单 */
+  .entry-form {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(160px, 1fr)) auto;
+    gap: 14px;
+    align-items: end;
+  }
+  .field label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .field input, .field select {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--input-bg);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .field input:focus, .field select:focus {
+    border-color: var(--sea);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+  .field select { cursor: pointer; }
+
+  .btn {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter .15s, transform .05s;
+    white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--sea); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-ghost {
+    background: var(--card);
+    color: var(--danger-text);
+    border: 1px solid var(--danger-border);
+  }
+  .btn-ghost:hover { background: var(--danger-hover); }
+  .form-msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .form-msg.error { color: var(--danger-text); }
+  .form-msg.ok { color: var(--ok); }
+
+  /* 汇总卡片 */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    border-radius: 10px;
+    padding: 16px 18px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat::after {
+    content: "";
+    position: absolute;
+    right: -14px; top: -14px;
+    width: 70px; height: 70px;
+    background: rgba(255,255,255,.12);
+    border-radius: 50%;
+  }
+  .stat.sailing { background: linear-gradient(135deg, #2563eb, #1e40af); }
+  .stat.anchorage { background: linear-gradient(135deg, #f59e0b, #b45309); }
+  .stat.drifting { background: linear-gradient(135deg, #06b6d4, #0e7490); }
+  .stat.berthing { background: linear-gradient(135deg, #22c55e, #15803d); }
+  .stat .stat-name { font-size: 14px; opacity: .92; display: flex; align-items: center; gap: 6px; }
+  .stat .stat-hours { font-size: 26px; font-weight: 700; margin: 6px 0 2px; }
+  .stat .stat-hours small { font-size: 13px; font-weight: 400; opacity: .85; }
+  .stat .stat-dhms { font-size: 12.5px; opacity: .9; }
+  .stat .stat-hm { font-size: 12.5px; opacity: .95; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .stat .stat-hm small { opacity: .8; }
+  .stat .stat-bar {
+    height: 4px; background: rgba(255,255,255,.25);
+    border-radius: 2px; margin-top: 10px; overflow: hidden;
+  }
+  .stat .stat-bar i {
+    display: block; height: 100%;
+    background: #fff; border-radius: 2px;
+    width: 0; transition: width .35s;
+  }
+
+  .total-line {
+    display: flex; flex-wrap: wrap; gap: 26px;
+    align-items: center;
+    background: var(--subtle-bg);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 13px 18px;
+    font-size: 14px;
+  }
+  .total-line b { color: var(--heading); font-size: 15px; }
+
+  /* 能耗设置 */
+  details.fuel-settings summary {
+    cursor: pointer;
+    font-size: 13.5px;
+    color: var(--accent);
+    font-weight: 600;
+    user-select: none;
+    margin-bottom: 12px;
+  }
+  .fuel-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .fuel-item label { font-size: 13px; color: var(--muted); display:block; margin-bottom: 6px; font-weight: 600; }
+  .fuel-item input {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 8px;
+    font-size: 14px; outline: none;
+  }
+  .fuel-item input:focus { border-color: var(--sea); box-shadow: 0 0 0 3px var(--focus-ring); }
+  .fuel-total {
+    margin-top: 14px;
+    font-size: 15px;
+    background: var(--fuel-bg);
+    border: 1px solid var(--fuel-border);
+    border-radius: 8px;
+    padding: 11px 16px;
+    color: var(--fuel-text);
+  }
+  .fuel-total b { font-size: 18px; }
+  .fuel-breakdown { font-size: 13px; color: var(--fuel-sub); margin-top: 5px; }
+
+  /* 区间表格 */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { background: var(--subtle-bg); color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+  tr:hover td { background: var(--hover-bg); }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .badge.sailing { background: var(--sailing); }
+  .badge.anchorage { background: var(--anchorage); }
+  .badge.drifting { background: var(--drifting); }
+  .badge.berthing { background: var(--berthing); }
+  .dur { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .del-btn {
+    background: none; border: none; cursor: pointer;
+    color: #b4c0d0; font-size: 17px; padding: 2px 6px;
+    border-radius: 6px;
+  }
+  .del-btn:hover { color: var(--danger-text); background: var(--danger-hover); }
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 34px 0;
+    font-size: 14px;
+  }
+  .table-toolbar {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 8px; margin-bottom: 10px;
+  }
+  .toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-outline { background: var(--card); color: var(--accent); border: 1px solid var(--outline-border); }
+  .btn-outline:hover { background: var(--outline-hover); }
+  .autosave-tip { font-size: 12.5px; color: var(--ok); }
+
+  /* 全局提示 toast */
+  #toast {
+    position: fixed; left: 50%; bottom: 34px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--toast-bg); color: #fff;
+    padding: 12px 22px; border-radius: 10px;
+    font-size: 14px; max-width: 80vw;
+    box-shadow: 0 8px 28px rgba(11,37,69,.35);
+    opacity: 0; pointer-events: none;
+    transition: opacity .25s, transform .25s;
+    z-index: 999; white-space: pre-line;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.ok { background: #15803d; }
+  #toast.error { background: var(--danger); }
+
+  /* 航次统计 */
+  .voyage-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .voyage-grid.oil-grid { grid-template-columns: repeat(5, 1fr); }
+  .voyage-result { border-top: 1px dashed var(--line); padding-top: 18px; margin-top: 6px; }
+  .vresult-chips {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .vchip {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 13px 16px;
+    background: var(--chip-bg);
+  }
+  .vchip .vc-name { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .vchip .vc-val { font-size: 20px; font-weight: 700; color: var(--heading); margin: 5px 0 2px; }
+  .vchip .vc-val small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .vchip .vc-sub { font-size: 12.5px; color: var(--muted); word-break: break-all; }
+  .vchip.fuel { background: var(--fuel-bg); border-color: var(--fuel-border); }
+  .vchip.fuel .vc-val { color: var(--fuel-text); }
+  .vstatus-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+  .vstatus {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .vstatus .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .vstatus.sailing .dot { background: var(--sailing); }
+  .vstatus.anchorage .dot { background: var(--anchorage); }
+  .vstatus.drifting .dot { background: var(--drifting); }
+  .vstatus.berthing .dot { background: var(--berthing); }
+  .vstatus .vs-name { font-size: 12.5px; color: var(--muted); }
+  .vstatus .vs-val { font-size: 14.5px; font-weight: 700; color: var(--text); margin-top: 2px; }
+  .vstatus .vs-val small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .vnote { font-size: 13px; color: var(--muted); line-height: 1.9; }
+  .vnote b { color: var(--heading); }
+  .vnote .vwarn { color: var(--danger-text); font-weight: 600; }
+  .vnote .vok b { color: var(--ok); }
+  .vnote .vok { color: var(--ok); font-weight: 600; }
+
+  /* 页脚：作者与联系方式 */
+  footer.site-footer {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 18px 20px 28px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.9;
+  }
+  footer.site-footer .footer-divider {
+    width: 64px; height: 3px;
+    background: linear-gradient(90deg, var(--sea), var(--drifting));
+    border-radius: 2px;
+    margin: 0 auto 12px;
+    opacity: .55;
+  }
+  footer.site-footer .author {
+    font-weight: 600;
+    color: var(--heading);
+    font-size: 14px;
+  }
+  footer.site-footer a {
+    color: var(--accent);
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+  }
+  footer.site-footer a:hover { text-decoration: underline; }
+  footer.site-footer .foot-sep { color: var(--line); margin: 0 10px; }
+
+  @media (max-width: 900px) {
+    .entry-form { grid-template-columns: repeat(2, 1fr); }
+    .entry-form .btn { grid-column: span 2; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .fuel-row { grid-template-columns: repeat(2, 1fr); }
+    .voyage-grid, .voyage-grid.oil-grid,
+    .vresult-chips, .vstatus-row { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⚓</div>
+  <div>
+    <h1>船舶能耗计算器</h1>
+    <p>录入各时间段与船舶状态，自动统计航行 / 锚泊 / 漂航 / 靠泊时长及能耗</p>
+  </div>
+  <button type="button" id="themeToggle" class="theme-toggle"
+          aria-label="切换深色模式" title="切换深色 / 浅色模式">
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+    </svg>
+  </button>
+</header>
+
+<div class="container">
+
+  <!-- 录入区 -->
+  <div class="card">
+    <h2>添加时间区间</h2>
+    <form id="entryForm" class="entry-form">
+      <div class="field">
+        <label for="startAt">开始时间</label>
+        <input type="datetime-local" id="startAt" step="1" required>
+      </div>
+      <div class="field">
+        <label for="endAt">结束时间</label>
+        <input type="datetime-local" id="endAt" step="1" required>
+      </div>
+      <div class="field">
+        <label for="status">船舶状态</label>
+        <select id="status">
+          <option value="sailing">航行</option>
+          <option value="anchorage">锚泊</option>
+          <option value="drifting">漂航</option>
+          <option value="berthing">靠泊</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="remark">备注（可选）</label>
+        <input type="text" id="remark" placeholder="如：上海→宁波">
+      </div>
+      <button type="submit" class="btn btn-primary">＋ 添加</button>
+    </form>
+    <div id="formMsg" class="form-msg"></div>
+  </div>
+
+  <!-- 航次统计区 -->
+  <div class="card">
+    <h2>航次统计与油耗核算</h2>
+    <div class="voyage-grid">
+      <div class="field">
+        <label for="vName">航次名称（可选）</label>
+        <input type="text" id="vName" placeholder="如：V2601 上海→新加坡">
+      </div>
+      <div class="field">
+        <label for="vLastArrival">上次抵港时间</label>
+        <input type="datetime-local" id="vLastArrival" step="1">
+      </div>
+      <div class="field">
+        <label for="vLastDeparture">上次离港时间</label>
+        <input type="datetime-local" id="vLastDeparture" step="1">
+      </div>
+      <div class="field">
+        <label for="vThisArrival">本次抵港时间</label>
+        <input type="datetime-local" id="vThisArrival" step="1">
+      </div>
+    </div>
+    <div class="voyage-grid oil-grid">
+      <div class="field">
+        <label for="oilLastArrival">上次抵港存油（吨）</label>
+        <input type="number" id="oilLastArrival" min="0" step="0.001" placeholder="0.000">
+      </div>
+      <div class="field">
+        <label for="oilLastDeparture">上次离港存油（吨）</label>
+        <input type="number" id="oilLastDeparture" min="0" step="0.001" placeholder="0.000">
+      </div>
+      <div class="field">
+        <label for="oilThisArrival">本次抵港存油（吨）</label>
+        <input type="number" id="oilThisArrival" min="0" step="0.001" placeholder="0.000">
+      </div>
+      <div class="field">
+        <label for="oilAdded">燃油添加量（吨）</label>
+        <input type="number" id="oilAdded" min="0" step="0.001" placeholder="0.000">
+      </div>
+      <div class="field">
+        <label for="oilTransferred">燃油驳出量（吨）</label>
+        <input type="number" id="oilTransferred" min="0" step="0.001" placeholder="0.000">
+      </div>
+    </div>
+    <div class="voyage-result" id="voyageResult"></div>
+  </div>
+
+  <!-- 汇总区 -->
+  <div class="card">
+    <h2>时间汇总</h2>
+    <div class="summary-grid" id="summaryGrid"></div>
+    <div class="total-line" id="totalLine"></div>
+
+    <details class="fuel-settings" id="fuelDetails">
+      <summary>⛽ 能耗参数设置（燃油消耗率，单位：吨/小时）</summary>
+      <div class="fuel-row">
+        <div class="fuel-item">
+          <label>航行油耗率</label>
+          <input type="number" id="rate-sailing" min="0" step="0.01" value="0.80">
+        </div>
+        <div class="fuel-item">
+          <label>锚泊油耗率</label>
+          <input type="number" id="rate-anchorage" min="0" step="0.01" value="0.10">
+        </div>
+        <div class="fuel-item">
+          <label>漂航油耗率</label>
+          <input type="number" id="rate-drifting" min="0" step="0.01" value="0.20">
+        </div>
+        <div class="fuel-item">
+          <label>靠泊油耗率</label>
+          <input type="number" id="rate-berthing" min="0" step="0.01" value="0.05">
+        </div>
+      </div>
+      <div class="fuel-total" id="fuelTotal"></div>
+    </details>
+  </div>
+
+  <!-- 明细区 -->
+  <div class="card">
+    <h2>时间区间明细</h2>
+    <div class="table-toolbar">
+      <div class="toolbar-left">
+        <span class="autosave-tip" id="autosaveTip">✓ 数据已自动保存在本机</span>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn btn-outline" id="saveBackupBtn" title="把全部数据保存为备份文件（.json）">💾 保存备份</button>
+        <button class="btn btn-outline" id="restoreBackupBtn" title="从备份文件（.json）恢复数据">♻ 恢复备份</button>
+        <button class="btn btn-outline" id="exportExcelBtn" title="导出为 Excel 文件（.xlsx）">📊 导出 Excel</button>
+        <button class="btn btn-outline" id="importExcelBtn" title="从 Excel 文件导入时间区间">📂 导入 Excel</button>
+        <button class="btn btn-ghost" id="clearAllBtn" title="只清空时间区间记录">清空区间</button>
+        <button class="btn btn-ghost" id="resetAllBtn" title="清空所有数据并恢复缺省设置">🧹 一键重置</button>
+      </div>
+      <input type="file" id="backupFileInput" accept=".json,application/json" hidden>
+      <input type="file" id="excelFileInput" accept=".xlsx,.xls" hidden>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+            <th>时长</th>
+            <th>状态</th>
+            <th>备注</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="recordsBody"></tbody>
+      </table>
+      <div class="empty" id="emptyTip">暂无时间区间，请在上方添加第一条记录</div>
+    </div>
+  </div>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer-divider"></div>
+  <div>
+    <span class="author">作者：Yang KOKORO</span>
+    <span class="foot-sep">|</span>
+    <span>联系方式：<a href="mailto:908903491@qq.com">908903491@qq.com</a></span>
+  </div>
+</footer>
+
+<div id="toast"></div>
+
+<script src="xlsx.full.min.js" onerror="window.__xlsxLocalFailed=true;"></script>
+<script>
+(function () {
+  "use strict";
+
+  const STATUSES = {
+    sailing:   { name: "航行", cls: "sailing" },
+    anchorage: { name: "锚泊", cls: "anchorage" },
+    drifting:  { name: "漂航", cls: "drifting" },
+    berthing:  { name: "靠泊", cls: "berthing" }
+  };
+  const STORAGE_KEY = "ship-energy-records-v1";
+  const RATE_KEY = "ship-energy-rates-v1";
+  const FORM_KEY = "ship-energy-form-v1";
+
+  /** @type {{id:string,start:number,end:number,status:string,remark:string}[]} */
+  let records = loadRecords();
+  let rates = loadRates();
+
+  const $ = (id) => document.getElementById(id);
+  const form = $("entryForm");
+  const formMsg = $("formMsg");
+
+  // ---------- 深色 / 浅色主题 ----------
+  const THEME_KEY = "ship-energy-theme-v1";
+  const themeToggleBtn = $("themeToggle");
+
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    const dark = theme === "dark";
+    themeToggleBtn.setAttribute("aria-pressed", dark ? "true" : "false");
+    themeToggleBtn.setAttribute("aria-label", dark ? "切换到浅色模式" : "切换到深色模式");
+    themeToggleBtn.title = dark ? "切换到浅色模式" : "切换到深色模式";
+  }
+  themeToggleBtn.addEventListener("click", function () {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+  });
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  // 用户未手动选择时，跟随系统外观变化自动切换
+  if (window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = function (e) {
+      let saved = null;
+      try { saved = localStorage.getItem(THEME_KEY); } catch (err) {}
+      if (saved !== "dark" && saved !== "light") {
+        applyTheme(e.matches ? "dark" : "light");
+      }
+    };
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else if (mq.addListener) mq.addListener(onChange); // 旧版 Safari 兼容
+  }
+
+  // ---------- 工具函数 ----------
+  function loadRecords() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+    } catch (e) { return []; }
+  }
+  function saveRecords() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  }
+  function loadRates() {
+    const def = { sailing: 0.80, anchorage: 0.10, drifting: 0.20, berthing: 0.05 };
+    try {
+      return Object.assign(def, JSON.parse(localStorage.getItem(RATE_KEY)) || {});
+    } catch (e) { return def; }
+  }
+  function saveRates() {
+    localStorage.setItem(RATE_KEY, JSON.stringify(rates));
+  }
+
+  // 录入框当前内容（关闭页面后再打开可恢复现场）
+  function saveFormState() {
+    try {
+      localStorage.setItem(FORM_KEY, JSON.stringify({
+        startAt: $("startAt").value,
+        endAt: $("endAt").value,
+        status: $("status").value,
+        remark: $("remark").value
+      }));
+    } catch (e) {}
+  }
+  function loadFormState() {
+    try { return JSON.parse(localStorage.getItem(FORM_KEY)) || null; }
+    catch (e) { return null; }
+  }
+  function pad(n) { return String(n).padStart(2, "0"); }
+
+  function formatDateTime(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  /** 毫秒 -> {days,hours,minutes,seconds,totalHours,text} */
+  function formatDuration(ms) {
+    const totalSec = Math.round(ms / 1000);
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    const parts = [];
+    if (days) parts.push(days + " 天");
+    if (hours) parts.push(hours + " 小时");
+    if (minutes) parts.push(minutes + " 分");
+    if (seconds || parts.length === 0) parts.push(seconds + " 秒");
+    return {
+      days, hours, minutes, seconds,
+      totalHours: totalSec / 3600,
+      text: parts.join(" ")
+    };
+  }
+
+  /** 毫秒 -> 累计小时:分钟（hh:mm），如 96:00、3:30 */
+  function formatHM(ms) {
+    const totalMin = Math.round(ms / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return h + ":" + pad(m);
+  }
+
+  function showMsg(text, type) {
+    formMsg.textContent = text;
+    formMsg.className = "form-msg " + (type || "");
+    if (type === "ok") setTimeout(() => { formMsg.textContent = ""; }, 2500);
+  }
+
+  // ---------- 渲染 ----------
+  function renderSummary() {
+    const totals = { sailing: 0, anchorage: 0, drifting: 0, berthing: 0 };
+    records.forEach(r => { totals[r.status] += (r.end - r.start); });
+    const grandMs = Object.values(totals).reduce((a, b) => a + b, 0);
+
+    const grid = $("summaryGrid");
+    grid.innerHTML = "";
+    Object.keys(STATUSES).forEach(key => {
+      const dur = formatDuration(totals[key]);
+      const pct = grandMs ? (totals[key] / grandMs * 100) : 0;
+      const div = document.createElement("div");
+      div.className = "stat " + STATUSES[key].cls;
+      div.innerHTML = `
+        <div class="stat-name">● ${STATUSES[key].name}</div>
+        <div class="stat-hours">${dur.totalHours.toFixed(2)} <small>小时</small></div>
+        <div class="stat-dhms">${dur.text}</div>
+        <div class="stat-hm">${formatHM(totals[key])} <small>(hh:mm)</small></div>
+        <div class="stat-bar"><i style="width:${pct.toFixed(1)}%"></i></div>
+      `;
+      grid.appendChild(div);
+    });
+
+    const grand = formatDuration(grandMs);
+    $("totalLine").innerHTML =
+      `<span>区间总数：<b>${records.length}</b> 条</span>` +
+      `<span>全部合计：<b>${grand.totalHours.toFixed(2)}</b> 小时</span>` +
+      `<span>即 <b>${grand.text}</b></span>` +
+      `<span>hh:mm：<b>${formatHM(grandMs)}</b></span>`;
+
+    renderFuel(totals);
+  }
+
+  function renderFuel(totals) {
+    const parts = [];
+    let grandFuel = 0;
+    Object.keys(STATUSES).forEach(key => {
+      const hours = totals[key] / 3600000;
+      const fuel = hours * (Number(rates[key]) || 0);
+      grandFuel += fuel;
+      parts.push(`${STATUSES[key].name} ${fuel.toFixed(3)} 吨`);
+    });
+    $("fuelTotal").innerHTML =
+      `预计总能耗：<b>${grandFuel.toFixed(3)}</b> 吨` +
+      `<div class="fuel-breakdown">${parts.join("　|　")}</div>`;
+  }
+
+  function renderTable() {
+    const body = $("recordsBody");
+    body.innerHTML = "";
+    // 按开始时间升序展示
+    const sorted = records.slice().sort((a, b) => a.start - b.start);
+    sorted.forEach((r, idx) => {
+      const tr = document.createElement("tr");
+      const dur = formatDuration(r.end - r.start);
+      const st = STATUSES[r.status];
+      tr.innerHTML = `
+        <td>${idx + 1}</td>
+        <td class="dur">${formatDateTime(r.start)}</td>
+        <td class="dur">${formatDateTime(r.end)}</td>
+        <td class="dur">${dur.text}<br>
+          <span style="color:var(--muted);font-size:12px">${dur.totalHours.toFixed(2)} 小时</span></td>
+        <td><span class="badge ${st.cls}">${st.name}</span></td>
+        <td>${escapeHtml(r.remark || "")}</td>
+        <td><button class="del-btn" title="删除此区间" data-id="${r.id}">✕</button></td>
+      `;
+      body.appendChild(tr);
+    });
+    $("emptyTip").style.display = records.length ? "none" : "block";
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  // ---------- 航次统计 ----------
+  const VOYAGE_KEY = "ship-energy-voyage-v1";
+  const VOY_IDS = ["vName", "vLastArrival", "vLastDeparture", "vThisArrival",
+                   "oilLastArrival", "oilLastDeparture", "oilThisArrival",
+                   "oilAdded", "oilTransferred"];
+  let voyageData = {};
+  try { voyageData = JSON.parse(localStorage.getItem(VOYAGE_KEY)) || {}; }
+  catch (e) { voyageData = {}; }
+
+  function timeVal(id) {
+    const v = $(id).value;
+    return v ? new Date(v).getTime() : NaN;
+  }
+  function numVal(id) {
+    const v = $(id).value.trim();
+    if (v === "") return null;
+    const n = Number(v);
+    return isNaN(n) ? null : n;
+  }
+  function fmtTons(n) { return n == null ? "—" : Number(n).toFixed(3); }
+
+  function renderVoyage() {
+    const el = $("voyageResult");
+    const tLA = timeVal("vLastArrival");    // 上次抵港
+    const tLD = timeVal("vLastDeparture");  // 上次离港
+    const tTA = timeVal("vThisArrival");    // 本次抵港
+    const timesReady = !isNaN(tLA) && !isNaN(tLD) && !isNaN(tTA);
+
+    const warns = [];
+    let sailMs = null, opMs = null, portMs = null;
+    if (timesReady) {
+      if (tLA > tLD) warns.push("「上次离港时间」不能早于「上次抵港时间」");
+      if (tLD > tTA) warns.push("「本次抵港时间」不能早于「上次离港时间」");
+      if (!warns.length) {
+        sailMs = tTA - tLD; // 航行时间 = 本次抵港 − 上次离港
+        opMs = tTA - tLA;   // 营运时间 = 本次抵港 − 上次抵港
+        portMs = tLD - tLA; // 上一港在港时间 = 上次离港 − 上次抵港
+      }
+    }
+
+    // 燃油实际消耗 = 上次抵港存油 + 燃油添加量 − 燃油驳出量 − 本次抵港存油
+    const oLA = numVal("oilLastArrival");
+    const oTA = numVal("oilThisArrival");
+    const added = numVal("oilAdded") || 0;
+    const out = numVal("oilTransferred") || 0;
+    let fuel = null;
+    if (oLA != null && oTA != null) {
+      fuel = oLA + added - out - oTA;
+      if (fuel < 0) warns.push("燃油实际消耗计算结果为负，请核对存油及添加 / 驳出数据");
+    }
+
+    // 航次窗口 [上次抵港, 本次抵港] 内四种状态汇总；跨边界区间只截取窗口内部分
+    const sums = { sailing: 0, anchorage: 0, drifting: 0, berthing: 0 };
+    let matched = 0, coveredMs = 0;
+    if (timesReady && warns.length === 0) {
+      records.forEach(r => {
+        const s = Math.max(r.start, tLA);
+        const e = Math.min(r.end, tTA);
+        if (e > s) {
+          sums[r.status] += (e - s);
+          coveredMs += (e - s);
+          matched++;
+        }
+      });
+    }
+
+    const timeChip = (ms) => {
+      if (ms == null) {
+        return '<div class="vc-val">—</div><div class="vc-sub">等待填写时间节点</div>';
+      }
+      const d = formatDuration(ms);
+      return `<div class="vc-val">${d.totalHours.toFixed(2)} <small>小时</small></div>` +
+             `<div class="vc-sub">${d.text}（${formatHM(ms)}）</div>`;
+    };
+
+    let html = '<div class="vresult-chips">' +
+      `<div class="vchip"><div class="vc-name">航行时间（本次抵港 − 上次离港）</div>${timeChip(sailMs)}</div>` +
+      `<div class="vchip"><div class="vc-name">营运时间（本次抵港 − 上次抵港）</div>${timeChip(opMs)}</div>` +
+      `<div class="vchip"><div class="vc-name">上一港在港时间（离港 − 抵港）</div>${timeChip(portMs)}</div>`;
+
+    if (fuel == null) {
+      html += '<div class="vchip fuel"><div class="vc-name">燃油实际消耗（上次抵港 − 本次抵港，剔除添加 / 驳出）</div>' +
+              '<div class="vc-val">—</div>' +
+              '<div class="vc-sub">请填写上次抵港存油与本次抵港存油</div></div>';
+    } else {
+      html += '<div class="vchip fuel"><div class="vc-name">燃油实际消耗（上次抵港 − 本次抵港，剔除添加 / 驳出）</div>' +
+              `<div class="vc-val">${fuel.toFixed(3)} <small>吨</small></div>` +
+              `<div class="vc-sub">${fmtTons(oLA)} + ${fmtTons(added)} − ${fmtTons(out)} − ${fmtTons(oTA)}</div></div>`;
+    }
+    html += "</div>";
+
+    html += '<div class="vstatus-row">';
+    Object.keys(STATUSES).forEach(key => {
+      const d = formatDuration(sums[key]);
+      const pct = opMs ? (sums[key] / opMs * 100).toFixed(1) : "0.0";
+      html += `<div class="vstatus ${STATUSES[key].cls}">
+        <span class="dot"></span>
+        <div>
+          <div class="vs-name">${STATUSES[key].name}（占营运时间 ${pct}%）</div>
+          <div class="vs-val">${d.totalHours.toFixed(2)} <small>小时</small>　${d.text}　<span style="color:var(--muted);font-weight:400">${formatHM(sums[key])}</span></div>
+        </div>
+      </div>`;
+    });
+    html += "</div>";
+
+    const notes = warns.map(w => `<span class="vwarn">⚠ ${escapeHtml(w)}</span>`);
+    if (!timesReady) {
+      notes.push("请填写 <b>上次抵港 / 上次离港 / 本次抵港</b> 三个时间节点，" +
+                 "系统将自动计算航行时间、营运时间，并统计航次窗口内四种状态的时长。");
+    } else if (warns.length === 0) {
+      const voyName = $("vName").value.trim();
+      if (voyName) notes.push(`航次：<b>${escapeHtml(voyName)}</b>`);
+      const cov = formatDuration(coveredMs);
+      notes.push(`航次窗口内匹配到 <b>${matched}</b> 条时间区间，四种状态合计 ` +
+                 `<b>${cov.totalHours.toFixed(2)}</b> 小时（${cov.text}，${formatHM(coveredMs)}）。`);
+      // 时间校验：营运时间必须等于四种状态时间统计的总和
+      const opD = formatDuration(opMs);
+      if (Math.abs(opMs - coveredMs) < 1000) {
+        notes.push(`<span class="vok">✓ 时间校验通过：营运时间 = 航行 + 锚泊 + 漂航 + 靠泊 = ` +
+                   `<b>${formatHM(opMs)}</b>（${opD.text}）</span>`);
+      } else if (opMs - coveredMs > 0) {
+        const gap = formatDuration(opMs - coveredMs);
+        notes.push(`<span class="vwarn">⚠ 时间校验未通过：营运时间 <b>${formatHM(opMs)}</b>（${opD.text}）` +
+                   `比四种状态合计 <b>${formatHM(coveredMs)}</b> 多 <b>${formatHM(opMs - coveredMs)}</b>` +
+                   `（${gap.text}），请补录缺少的状态区间。</span>`);
+      } else {
+        const gap = formatDuration(coveredMs - opMs);
+        notes.push(`<span class="vwarn">⚠ 时间校验未通过：四种状态合计 <b>${formatHM(coveredMs)}</b>` +
+                   `比营运时间 <b>${formatHM(opMs)}</b>（${opD.text}）多 <b>${formatHM(coveredMs - opMs)}</b>` +
+                   `（${gap.text}），区间可能重叠或超出航次窗口，请核对。</span>`);
+      }
+    }
+    el.innerHTML = html + `<div class="vnote">${notes.join("<br>")}</div>`;
+  }
+
+  function saveVoyage() {
+    const o = {};
+    VOY_IDS.forEach(id => { o[id] = $(id).value; });
+    try { localStorage.setItem(VOYAGE_KEY, JSON.stringify(o)); } catch (e) {}
+  }
+
+  function renderAll() {
+    renderSummary();
+    renderTable();
+    renderVoyage();
+  }
+
+  // ---------- 事件 ----------
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    const startVal = $("startAt").value;
+    const endVal = $("endAt").value;
+    if (!startVal || !endVal) {
+      showMsg("请填写完整的开始时间和结束时间", "error");
+      return;
+    }
+    const start = new Date(startVal).getTime();
+    const end = new Date(endVal).getTime();
+    if (isNaN(start) || isNaN(end)) {
+      showMsg("时间格式不正确", "error");
+      return;
+    }
+    if (end <= start) {
+      showMsg("结束时间必须晚于开始时间", "error");
+      return;
+    }
+    records.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      start: start,
+      end: end,
+      status: $("status").value,
+      remark: $("remark").value.trim()
+    });
+    saveRecords();
+    renderAll();
+    showMsg(`已添加：${STATUSES[$("status").value].name} ${formatDuration(end - start).text}`, "ok");
+    $("remark").value = "";
+    // 连续录入：上一段的结束时间自动带入下一段的开始时间
+    $("startAt").value = $("endAt").value;
+    saveFormState();
+  });
+
+  $("recordsBody").addEventListener("click", function (e) {
+    const btn = e.target.closest(".del-btn");
+    if (!btn) return;
+    records = records.filter(r => r.id !== btn.dataset.id);
+    saveRecords();
+    renderAll();
+  });
+
+  $("clearAllBtn").addEventListener("click", function () {
+    if (records.length === 0) return;
+    if (confirm(`确定要清空全部 ${records.length} 条时间区间吗？此操作不可恢复。`)) {
+      records = [];
+      saveRecords();
+      renderAll();
+    }
+  });
+
+  // 一键重置：所有数据恢复缺省（区间清空、航次清空、油耗率恢复默认、录入框回到初始时间）
+  const DEFAULT_RATES = { sailing: 0.80, anchorage: 0.10, drifting: 0.20, berthing: 0.05 };
+  $("resetAllBtn").addEventListener("click", function () {
+    const msg =
+      "确定要一键重置吗？此操作不可恢复：\n\n" +
+      "· 清空全部时间区间记录\n" +
+      "· 清空航次名称、时间节点与全部存油数据\n" +
+      "· 油耗率恢复缺省（航行0.80 / 锚泊0.10 / 漂航0.20 / 靠泊0.05 吨/小时）\n" +
+      "· 录入框恢复为当前时间\n\n" +
+      "建议先点“💾 保存备份”再继续。";
+    if (!confirm(msg)) return;
+    // 时间区间
+    records = [];
+    saveRecords();
+    // 油耗率恢复缺省
+    rates = Object.assign({}, DEFAULT_RATES);
+    saveRates();
+    Object.keys(rates).forEach(function (key) { $("rate-" + key).value = rates[key]; });
+    // 航次信息全部清空
+    voyageData = {};
+    localStorage.removeItem(VOYAGE_KEY);
+    VOY_IDS.forEach(function (id) { $(id).value = ""; });
+    // 录入表单恢复缺省：开始=当前整点分钟、结束=1小时后、状态=航行、备注空
+    const n = new Date();
+    n.setSeconds(0, 0);
+    $("startAt").value = toLocalInput(n.getTime());
+    $("endAt").value = toLocalInput(n.getTime() + 3600000);
+    $("status").value = "sailing";
+    $("remark").value = "";
+    localStorage.removeItem(FORM_KEY);
+    renderAll();
+    toast("已重置为缺省状态", "ok");
+  });
+
+  // 油耗率：回填 + 监听
+  Object.keys(rates).forEach(key => {
+    const input = $("rate-" + key);
+    input.value = rates[key];
+    input.addEventListener("input", function () {
+      rates[key] = Number(input.value) || 0;
+      saveRates();
+      renderSummary();
+    });
+  });
+
+  // 航次：回填 + 输入即算
+  VOY_IDS.forEach(id => {
+    const input = $(id);
+    if (voyageData[id] != null) input.value = voyageData[id];
+    input.addEventListener("input", function () {
+      saveVoyage();
+      renderVoyage();
+    });
+  });
+
+  // ---------- 备份 / 导出 / 导入 ----------
+  let toastTimer = null;
+  function toast(msg, type) {
+    const el = $("toast");
+    el.textContent = msg;
+    el.className = "show " + (type || "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.className = ""; }, 4000);
+  }
+
+  function fileStamp() {
+    const d = new Date();
+    return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+           "-" + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+
+  function downloadBlob(content, filename, mime) {
+    const blob = new Blob([content], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+
+  /** 本地 xlsx 库缺失时（如文件被移动）尝试 CDN 兜底 */
+  function ensureXLSX() {
+    return new Promise(function (resolve, reject) {
+      if (window.XLSX) { resolve(); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+      s.onload = function () { window.XLSX ? resolve() : reject(new Error("Excel 组件加载失败")); };
+      s.onerror = function () { reject(new Error("Excel 组件加载失败：缺少 xlsx.full.min.js 且当前无网络")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+
+  function voyageSnapshot() {
+    const o = {};
+    VOY_IDS.forEach(function (id) { o[id] = $(id).value; });
+    return o;
+  }
+
+  /** 统一写入入口（备份恢复 / Excel 导入共用） */
+  function applyAll(nextRecords, nextRates, nextVoyage) {
+    records = nextRecords;
+    saveRecords();
+    if (nextRates) {
+      Object.keys(rates).forEach(function (k) {
+        if (nextRates[k] != null && !isNaN(Number(nextRates[k]))) {
+          rates[k] = Number(nextRates[k]);
+          $("rate-" + k).value = rates[k];
+        }
+      });
+      saveRates();
+    }
+    if (nextVoyage) {
+      VOY_IDS.forEach(function (id) {
+        if (nextVoyage[id] != null) $(id).value = nextVoyage[id];
+      });
+      saveVoyage();
+    }
+    renderAll();
+  }
+
+  // 航次窗口计算（导出用，与页面口径保持一致）
+  function voyageComputed() {
+    const tLA = timeVal("vLastArrival"), tLD = timeVal("vLastDeparture"), tTA = timeVal("vThisArrival");
+    const ok = !isNaN(tLA) && !isNaN(tLD) && !isNaN(tTA) && tLA <= tLD && tLD <= tTA;
+    const sums = { sailing: 0, anchorage: 0, drifting: 0, berthing: 0 };
+    if (ok) {
+      records.forEach(function (r) {
+        const s = Math.max(r.start, tLA), e = Math.min(r.end, tTA);
+        if (e > s) sums[r.status] += (e - s);
+      });
+    }
+    let fuel = null;
+    const oLA = numVal("oilLastArrival"), oTA = numVal("oilThisArrival");
+    if (oLA != null && oTA != null) {
+      fuel = oLA + (numVal("oilAdded") || 0) - (numVal("oilTransferred") || 0) - oTA;
+    }
+    return {
+      ok: ok,
+      sailMs: ok ? tTA - tLD : null,
+      opMs: ok ? tTA - tLA : null,
+      portMs: ok ? tLD - tLA : null,
+      sums: sums,
+      fuel: fuel
+    };
+  }
+
+  // ---- 保存备份（JSON）----
+  $("saveBackupBtn").addEventListener("click", function () {
+    const data = {
+      app: "ship-energy-calculator",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      records: records,
+      rates: rates,
+      voyage: voyageSnapshot()
+    };
+    downloadBlob(JSON.stringify(data, null, 2),
+      "船舶能耗备份-" + fileStamp() + ".json", "application/json");
+    toast("备份文件已保存（共 " + records.length + " 条时间区间）", "ok");
+  });
+
+  // ---- 恢复备份（JSON）----
+  $("restoreBackupBtn").addEventListener("click", function () {
+    $("backupFileInput").click();
+  });
+  $("backupFileInput").addEventListener("change", function (e) {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      let data;
+      try { data = JSON.parse(reader.result); }
+      catch (err) { toast("备份文件无法解析，请确认是本软件保存的 .json 备份", "error"); return; }
+      if (!data || !Array.isArray(data.records)) {
+        toast("备份文件格式不正确（缺少 records 数据）", "error");
+        return;
+      }
+      if (!confirm("恢复备份将【替换】当前全部 " + records.length +
+                   " 条时间区间和航次信息，确定继续？")) return;
+      const valid = data.records.filter(function (r) {
+        return r && typeof r.start === "number" && typeof r.end === "number" && STATUSES[r.status];
+      }).map(function (r) {
+        return { id: r.id || newId(), start: r.start, end: r.end,
+                 status: r.status, remark: r.remark || "" };
+      });
+      applyAll(valid, data.rates, data.voyage);
+      toast("备份已恢复：时间区间 " + valid.length + " 条", "ok");
+    };
+    reader.readAsText(file, "utf-8");
+  });
+
+  // ---- 导出 Excel ----
+  $("exportExcelBtn").addEventListener("click", function () {
+    ensureXLSX().then(function () {
+      const XLSX = window.XLSX;
+      const sorted = records.slice().sort(function (a, b) { return a.start - b.start; });
+
+      // Sheet1 时间区间明细
+      const detail = [["序号", "开始时间", "结束时间", "时长(小时)", "状态", "备注"]];
+      sorted.forEach(function (r, i) {
+        detail.push([
+          i + 1,
+          formatDateTime(r.start),
+          formatDateTime(r.end),
+          +((r.end - r.start) / 3600000).toFixed(2),
+          STATUSES[r.status].name,
+          r.remark || ""
+        ]);
+      });
+
+      // Sheet2 航次统计（项目 / 内容；该表可直接修改后重新导入）
+      const vc = voyageComputed();
+      const voy = [
+        ["项目", "内容"],
+        ["航次名称", $("vName").value],
+        ["上次抵港时间", $("vLastArrival").value ? formatDateTime(timeVal("vLastArrival")) : ""],
+        ["上次离港时间", $("vLastDeparture").value ? formatDateTime(timeVal("vLastDeparture")) : ""],
+        ["本次抵港时间", $("vThisArrival").value ? formatDateTime(timeVal("vThisArrival")) : ""],
+        ["上次抵港存油(吨)", $("oilLastArrival").value],
+        ["上次离港存油(吨)", $("oilLastDeparture").value],
+        ["本次抵港存油(吨)", $("oilThisArrival").value],
+        ["燃油添加量(吨)", $("oilAdded").value],
+        ["燃油驳出量(吨)", $("oilTransferred").value],
+        ["—— 以下为计算结果（仅供查阅，导入时不读取）——", ""],
+        ["航行时间(小时)", vc.sailMs != null ? +(vc.sailMs / 3600000).toFixed(2) : ""],
+        ["航行时间(hh:mm)", vc.sailMs != null ? formatHM(vc.sailMs) : ""],
+        ["营运时间(小时)", vc.opMs != null ? +(vc.opMs / 3600000).toFixed(2) : ""],
+        ["营运时间(hh:mm)", vc.opMs != null ? formatHM(vc.opMs) : ""],
+        ["上一港在港时间(小时)", vc.portMs != null ? +(vc.portMs / 3600000).toFixed(2) : ""],
+        ["燃油实际消耗(吨)", vc.fuel != null ? +vc.fuel.toFixed(3) : ""],
+        ["航行合计(小时)", vc.ok ? +(vc.sums.sailing / 3600000).toFixed(2) : ""],
+        ["锚泊合计(小时)", vc.ok ? +(vc.sums.anchorage / 3600000).toFixed(2) : ""],
+        ["漂航合计(小时)", vc.ok ? +(vc.sums.drifting / 3600000).toFixed(2) : ""],
+        ["靠泊合计(小时)", vc.ok ? +(vc.sums.berthing / 3600000).toFixed(2) : ""]
+      ];
+
+      // Sheet3 时间汇总
+      const totals = { sailing: 0, anchorage: 0, drifting: 0, berthing: 0 };
+      records.forEach(function (r) { totals[r.status] += (r.end - r.start); });
+      const summary = [["状态", "时长(小时)", "时长(hh:mm)", "天-时-分-秒"]];
+      let grandMs = 0;
+      Object.keys(STATUSES).forEach(function (k) {
+        const d = formatDuration(totals[k]);
+        grandMs += totals[k];
+        summary.push([STATUSES[k].name, +d.totalHours.toFixed(2), formatHM(totals[k]), d.text]);
+      });
+      const gd = formatDuration(grandMs);
+      summary.push(["合计", +gd.totalHours.toFixed(2), formatHM(grandMs), gd.text]);
+
+      // Sheet4 油耗参数
+      const rateRows = [["状态", "燃油消耗率(吨/小时)"]];
+      Object.keys(STATUSES).forEach(function (k) {
+        rateRows.push([STATUSES[k].name, rates[k]]);
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws1 = XLSX.utils.aoa_to_sheet(detail);
+      const ws2 = XLSX.utils.aoa_to_sheet(voy);
+      const ws3 = XLSX.utils.aoa_to_sheet(summary);
+      const ws4 = XLSX.utils.aoa_to_sheet(rateRows);
+      ws1["!cols"] = [{ wch: 6 }, { wch: 20 }, { wch: 20 }, { wch: 11 }, { wch: 8 }, { wch: 20 }];
+      ws2["!cols"] = [{ wch: 36 }, { wch: 22 }];
+      ws3["!cols"] = [{ wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 20 }];
+      ws4["!cols"] = [{ wch: 10 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, ws1, "时间区间明细");
+      XLSX.utils.book_append_sheet(wb, ws2, "航次统计");
+      XLSX.utils.book_append_sheet(wb, ws3, "时间汇总");
+      XLSX.utils.book_append_sheet(wb, ws4, "油耗参数");
+      XLSX.writeFile(wb, "船舶能耗统计-" + fileStamp() + ".xlsx");
+      toast("Excel 已导出：" + sorted.length + " 条时间区间", "ok");
+    }).catch(function (err) { toast(err.message || "Excel 导出失败", "error"); });
+  });
+
+  // ---- 导入 Excel ----
+  function parseExcelDate(v) {
+    if (v == null || v === "") return NaN;
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === "number") {
+      // Excel 日期序列号（1899-12-30 起算）
+      return Math.round((v - 25569) * 86400 * 1000);
+    }
+    const s = String(v).trim().replace(/[年月]/g, "/").replace(/日/g, "").replace(/-/g, "/");
+    const t = new Date(s).getTime();
+    return isNaN(t) ? NaN : t;
+  }
+
+  $("importExcelBtn").addEventListener("click", function () {
+    $("excelFileInput").click();
+  });
+  $("excelFileInput").addEventListener("change", function (e) {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    ensureXLSX().then(function () {
+      const XLSX = window.XLSX;
+      const reader = new FileReader();
+      reader.onload = function () {
+        let wb;
+        try {
+          wb = XLSX.read(new Uint8Array(reader.result), { type: "array", cellDates: true });
+        } catch (err) {
+          toast("无法读取该文件，请确认是有效的 Excel 文件（.xlsx/.xls）", "error");
+          return;
+        }
+
+        // 1) 时间区间明细：兼容本软件导出表与用户自制表（自动识别表头）
+        const nameToKey = {};
+        Object.keys(STATUSES).forEach(function (k) { nameToKey[STATUSES[k].name] = k; });
+        nameToKey["飘航"] = "drifting"; // 兼容旧版导出文件中的“飘航”写法
+        const imported = [];
+        const skipped = [];
+
+        const wsDetail = wb.Sheets["时间区间明细"] || wb.Sheets[wb.SheetNames[0]];
+        if (wsDetail) {
+          const rows = XLSX.utils.sheet_to_json(wsDetail, { header: 1, raw: true, defval: "" });
+          let headRow = -1, ci = { start: -1, end: -1, status: -1, remark: -1 };
+          for (let i = 0; i < Math.min(rows.length, 10); i++) {
+            const cells = (rows[i] || []).map(function (c) { return String(c).trim(); });
+            const sIdx = cells.findIndex(function (c) { return c.indexOf("开始") >= 0; });
+            const eIdx = cells.findIndex(function (c) { return c.indexOf("结束") >= 0; });
+            if (sIdx >= 0 && eIdx >= 0) {
+              headRow = i;
+              ci.start = sIdx;
+              ci.end = eIdx;
+              ci.status = cells.findIndex(function (c) { return c.indexOf("状态") >= 0; });
+              ci.remark = cells.findIndex(function (c) { return c.indexOf("备注") >= 0; });
+              break;
+            }
+          }
+          if (headRow < 0) {
+            skipped.push("未找到包含“开始时间/结束时间”的表头行");
+          } else {
+            for (let i = headRow + 1; i < rows.length; i++) {
+              const rowNo = i + 1;
+              const row = rows[i] || [];
+              const g = function (idx) { return idx >= 0 ? row[idx] : ""; };
+              if (!g(ci.start) && !g(ci.end)) continue; // 整行空跳过
+              const s = parseExcelDate(g(ci.start));
+              const en = parseExcelDate(g(ci.end));
+              const statusName = String(g(ci.status)).trim();
+              const key = nameToKey[statusName];
+              if (isNaN(s)) { skipped.push("第" + rowNo + "行：开始时间无法识别"); continue; }
+              if (isNaN(en)) { skipped.push("第" + rowNo + "行：结束时间无法识别"); continue; }
+              if (en <= s) { skipped.push("第" + rowNo + "行：结束时间不晚于开始时间"); continue; }
+              if (!key) { skipped.push("第" + rowNo + "行：状态“" + statusName + "”无法识别"); continue; }
+              imported.push({
+                id: newId(), start: s, end: en, status: key,
+                remark: ci.remark >= 0 ? String(g(ci.remark)).trim() : ""
+              });
+            }
+          }
+        }
+
+        // 2) 航次统计：按项目名匹配
+        let voyageData2 = null;
+        const wsVoy = wb.Sheets["航次统计"];
+        if (wsVoy) {
+          const vrows = XLSX.utils.sheet_to_json(wsVoy, { header: 1, raw: true, defval: "" });
+          const v = {};
+          const labelMap = [
+            ["航次名称", "vName", "text"],
+            ["上次抵港时间", "vLastArrival", "date"],
+            ["上次离港时间", "vLastDeparture", "date"],
+            ["本次抵港时间", "vThisArrival", "date"],
+            ["上次抵港存油", "oilLastArrival", "num"],
+            ["上次离港存油", "oilLastDeparture", "num"],
+            ["本次抵港存油", "oilThisArrival", "num"],
+            ["燃油添加量", "oilAdded", "num"],
+            ["燃油驳出量", "oilTransferred", "num"]
+          ];
+          vrows.forEach(function (row) {
+            const label = String(row[0] || "").trim();
+            if (!label || label.charAt(0) === "—") return;
+            labelMap.forEach(function (m) {
+              if (label.indexOf(m[0]) >= 0 && v[m[1]] === undefined) {
+                if (m[2] === "text") v[m[1]] = String(row[1] || "").trim();
+                else if (m[2] === "date") {
+                  const t = parseExcelDate(row[1]);
+                  if (!isNaN(t)) v[m[1]] = toLocalInput(t);
+                } else {
+                  if (row[1] !== "" && row[1] != null) {
+                    const n = Number(row[1]);
+                    if (!isNaN(n)) v[m[1]] = n;
+                  }
+                }
+              }
+            });
+          });
+          if (Object.keys(v).length) voyageData2 = v;
+        }
+
+        if (!imported.length && !voyageData2) {
+          toast("未从该 Excel 中识别到可导入的数据（需要“开始时间/结束时间/状态”列）", "error");
+          return;
+        }
+        if (!confirm("导入将【替换】当前全部 " + records.length + " 条时间区间和航次信息，" +
+                     "本次识别到 " + imported.length + " 条区间" +
+                     (voyageData2 ? "及航次信息" : "") + "，确定继续？\n" +
+                     "（建议先点“保存备份”）")) return;
+
+        applyAll(imported, null, voyageData2);
+        let msg = "Excel 导入完成：时间区间 " + imported.length + " 条";
+        if (voyageData2) msg += "，航次信息已读取";
+        if (skipped.length) msg += "\n跳过 " + skipped.length + " 项：" + skipped.slice(0, 3).join("；") +
+                                  (skipped.length > 3 ? " 等" : "");
+        toast(msg, skipped.length ? "error" : "ok");
+      };
+      reader.readAsArrayBuffer(file);
+    }).catch(function (err) { toast(err.message || "Excel 导入失败", "error"); });
+  });
+
+  // 默认填入：开始=当前时间，结束=1小时后（方便快速试用）
+  function toLocalInput(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  const now = new Date();
+  now.setSeconds(0, 0);
+  $("startAt").value = toLocalInput(now.getTime());
+  const later = new Date(now.getTime() + 3600000);
+  $("endAt").value = toLocalInput(later.getTime());
+
+  // 恢复关闭前录入框的现场（有保存值则覆盖默认值）
+  const savedForm = loadFormState();
+  if (savedForm) {
+    if (savedForm.startAt) $("startAt").value = savedForm.startAt;
+    if (savedForm.endAt) $("endAt").value = savedForm.endAt;
+    if (savedForm.status) $("status").value = savedForm.status;
+    if (savedForm.remark != null) $("remark").value = savedForm.remark;
+  }
+  ["startAt", "endAt", "status", "remark"].forEach(id => {
+    $(id).addEventListener("input", saveFormState);
+    $(id).addEventListener("change", saveFormState);
+  });
+
+  renderAll();
+})();
+</script>
+</body>
+</html>
